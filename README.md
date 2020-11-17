@@ -1,5 +1,7 @@
 # BMIN503/EPID600 Final Project
 
+The MIMIC-III dataset contains healthcare data records for over 60,000 patients admitted to the Beth Israel Deaconess Medical Center in Massachusetts from June 2001 - October 2012. This dataset will be used to explore patients characteritics diagnosed with thrombotic events. We define two exclusive patient's cohort (thrombotic, and bleeding) and study the features of these two cohorts. 
+
 This repository contains templates for your final written report and GitHub repository. Follow the instructions below to clone this repository, and then turn in your final project's code via a pull request to this repository.
 
 1. To start, **fork** this BMIN503_Final_Project repository.
