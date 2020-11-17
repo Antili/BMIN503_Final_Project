@@ -1,6 +1,6 @@
 ---
 title: "BMIN503/EPID600 Project Template"
-author: "Your Name"
+author: "Anahita DAvoudi"
 output: 
   html_document:
     toc: false 
@@ -15,18 +15,335 @@ options(width = 400)
 Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
 
 ### Overview
-Give a brief a description of your project and its goal(s), what data you are using to complete it, and what three faculty/staff in different fields you have spoken to about your project with a brief summary of what you learned from each person. Include a link to your final project GitHub repository.
+
+This project uses the publicly available MIMIC-III ICU dataset to study the characteristics of the patients admitted to the Beth Israel Deaconess Medical Center under the category of Thrombotic events. This dataset has been developed by MIT and published around over 60,000 intensive care unit hospitalizations. This dataset includes demographics, vital signs, laboratory tests, medications, and other structured and unstructured data.
+
+Three faculty/staff have been consulted for the definition of the project:
+- Danielle Mowery: Assistant Professor; Department of Biostatistics, Epidemiology, and Informatics
+- Emily Schriver: Clinical Informaticist; Data Analytic Center
+- Sy Hwang: NLP data scientist/programmer; IBI Clinical Research Informatics Core   
 
 
 ### Introduction 
-Describe the problem addressed, its significance, and some background to motivate the problem.
 
-Explain why your problem is interdisciplinary, what fields can contribute to its understanding, and incorporate background related to what you learned from meeting with faculty/staff.
+The thrombotic events have got attention due to COVID-19 recently. The thrombogenicity of COVID-19 has been detected by the high frequency of thrombotic events observed even in Covid-19 patients treated with anticoagulation. The thrombotic events hit every aspect of the circulatory system (e.g., multi-organ and multi-system). The clots can happen anywhere in the body, and we need a better way of identifying and classifying patients. We can achieve that by the qualitative characterizations of this data, looking at overlaps, and the different features between all categories of the thrombotic events.
+
+We use a data-driven approach for subphenotyping of patients. Subphenotyoing can be quite challenging and very biased. For this project, we used exploratory data analysis and natural language processing methods to help extract features of patients identified by thrombotic events. We have used ICD9 codes to describe our subcohort of thrombotic events from MIMIC-III. We will examine the patterns seen in the two cohorts of thrombotic and bleeding. 
 
 
 ### Methods
 Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
 
+The MIMIC-III dataset contains healthcare data records for over 60,000 patients admitted to the Beth Israel Deaconess Medical Center in Massachusetts from June 2001 - October 2012. This dataset will be used to explore patients characteritics diagnosed with thrombotic events. We define two exclusive patient's cohort (thrombotic, and bleeding) and study the features of these two cohorts. 
+
+
+Required packages for the project:
+
+```{r}
+library(tm)
+library(dplyr) 
+library(ggplot2)
+library(wordcloud)
+library(RColorBrewer)
+library(topicmodels)
+library(tidyr)
+library(tidyverse) 
+library(ggraph)
+library(igraph)
+```
+
+#### Importing data
+
+List of input data from the MIMIC-III dataset:
+
+```{r}
+Admissions      <-  read.csv(file = 'ADMISSIONS.csv')
+icdcodes        <- read.csv(file = 'DIAGNOSES_ICDs.csv')
+#labs            <- read.csv(file = 'LABEVENTS.csv')
+#micro           <- read.csv(file = 'MICROBIOLOGYEVENTS.csv')
+#prescriptions   <- read.csv(file = 'PRESCRIPTIONS.csv')
+patients        <- read.csv(file = 'PATIENTS.csv')
+notes           <- read.csv(file = 'NOTEEVENTSs.csv')
+
+```
+
+
+#### Data Cleaning
+
+This section selects only relevant information from Admissions, Diagnoses (ICD codes), Patients, Note events, lab events, prescriptions, labs, and micro tables. 
+
+##### Predefined ICD9 Codes
+
+A set of specific ICD9 codes are presented for the two category of thrombotic and bleeding:
+
+```{r}
+icd_thrombotics <- c("452", "4358", "4359", "4536", "4532", "4533", "4510", "36234", "41071", "41091", "41181", "41512", "42979", "43391", "44409", "44481", "45351", "45386", "45382")
+
+icd_bleeding <- c("430", "431", "4230", "4320", "4321", "4560", "5693", "5695", "5789", "37923", "42979", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160", "53200", "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300", "53310", "53320", "53340", "53350", "53360", "53400", "53410", "53420", "53440", "53450", "53460", "56212", "56213", "56201", "56202", "56203", "72992", "56881")
+```
+
+
+##### Varible Selection
+
+We are intersetd in specific variables in each table. Since we are looking at thrombotic events, we are only interested in the note category of "Discharge Summary", and "Radiology" from the note event table. 
+
+```{r}
+
+#note_cat <- c("Discharge summary", "Radiology")
+#notes_new <- subset(notes, CATEGORY %in% note_cat)
+#note_new_clipped <- notes_new[,which(colnames(notes_new) %in% c("ROW_ID", "SUBJECT_ID", "HADM_ID", "CATEGORY", "TEXT"))]
+#icdcode_clipped <- icdcodes[,which(colnames(icdcodes) %in% c("ROW_ID", "SUBJECT_ID", "HADM_ID", "ICD9_CODE"))]
+
+newicd_thrombo <- subset(icdcodes, ICD9_CODE %in% icd_thrombotics)
+newicd_bleed <- subset(icdcodes, ICD9_CODE %in% icd_bleeding)
+
+```
+
+
+#### Joining Tables
+
+```{r}
+# Merging two tables that represent the two cohorts of thrombotic and bleeding by the two indexes
+
+icd_notes_thrombo <- inner_join(x = notes, y = newicd_thrombo, by = c("SUBJECT_ID", "HADM_ID"))
+icd_notes_bleed <- inner_join(x = notes, y = newicd_bleed, by = c("SUBJECT_ID", "HADM_ID"))
+
+```
+
+#### Topic Modeling
+
+As a popular unsupervised method, we used topic Modeling with Latent Dirichlet Allocation (LDA) for discovering latent semantic properties of our cohorts' notes. 
+
+##### Document Cleaning 
+
+Neccesary steps before apply the LDA model
+
+1. Creating the corpus
+2. Cleaning the corpus (removing punctuations, numbers, stop words, white spaces, etc.)
+3. getting rid of very commons words in the text 
+
+```{r}
+
+notes_document <- icd_notes_thrombo%>% select(ROW_ID.x, TEXT)%>% rename(doc_id = ROW_ID.x, text = TEXT)
+
+notes_corpus <- Corpus(DataframeSource(notes_document))
+
+notes_corpus <- tm_map(notes_corpus, removePunctuation, preserve_intra_word_dashes = TRUE)
+
+notes_corpus <- tm_map(notes_corpus, removeNumbers)
+
+notes_corpus <- tm_map(notes_corpus, tolower)
+
+english_stopwords <- readLines("https://slcladal.github.io/resources/stopwords_en.txt", encoding = "UTF-8")
+
+notes_corpus <- tm_map(notes_corpus, removeWords, c(english_stopwords, "admission","discharge","doctor", "hospital", "job", "number", "last", "first", "name", "namepattern", "date", "telephon", "fax", "patient", "left", "right", "man", "woman", "status", "note", "clip", "report", "radiology", "reason", "chest", "report", "medic", "radilog", "admit", "year", "final", "impress", "chang", "unchang", "find", "histori", "present", "portabl")) 
+
+notes_corpus <- tm_map(notes_corpus, stemDocument, language = "en")
+
+
+notes_corpus <- tm_map(notes_corpus, stripWhitespace)
+
+```
+
+
+##### Building Document Term Matrix
+
+In the LDA model, we need to build a Document Term Matrix (DTM) that contains the number of term occurrences per document. The rows of the DTM represent the documents, and the columns represent the whole vocabulary. Setting a minimum frequency would save overwhelming the system's memory. 
+```{r}
+min_freq <- 10000
+notes_corpus.dtm <- DocumentTermMatrix(notes_corpus, control = list(bounds = list(global = c(min_freq, Inf))))
+
+rowTotals <- apply(notes_corpus.dtm , 1, sum)
+
+notes_corpus.dtm   <- notes_corpus.dtm[rowTotals> 0, ] 
+
+dim(notes_corpus.dtm)
+
+```
+
+##### Term Frequency 
+
+```{r}
+freq <- sort(colSums(as.matrix(notes_corpus.dtm)), decreasing=TRUE)   
+
+word.freq <- data.frame(word = names(freq), freq = freq)
+
+ggplot(subset(word.freq, freq > 10000), aes(x = reorder(word, -freq), y = freq)) +
+  geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + coord_flip() + labs(title = "Frequency of terms")
+
+
+```
+
+##### Word Cloud
+
+
+```{r}
+
+#set.seed(2000)
+
+#wordcloud(words = names(freq), freq = freq, min.freq = 10000, max.words=50, random.order=FALSE, rot.per=0.35, colors=brewer.pal(8, "Dark2"))
+
+```
+
+
+##### LDA topic Modelling 
+
+To apply the LDA model, various parameters need to be set, e.g. number of topics, the LDA methods, iterations,etc. 
+
+```{r}
+
+K <- 20
+set.seed(2000)
+# Gibbs sampling
+topicModel <- LDA(notes_corpus.dtm, K, method="Gibbs", control=list(iter = 1000, verbose = 50))
+
+```
+
+##### Topic Terms
+
+```{r}
+terms(topicModel, 10)
+
+```
+
+##### Best topics by coherence and prevalence score
+
+Two measures are presented here: Coherence and Prevalence. Coherence tell us how associated words are in a topic. Prevalence tells us the most frequent topics in the corpus.
+
+```{r}
+# the figure for coherence and prevalence score in the Topic Model
+
+
+```
+
+##### Cluster Analysis of the Topics
+
+Using Hellinger distance to explore the relatedness between topics. 
+
+```{r}
+# Dendogram (distance between 2 probability vectors) 
+
+
+```
+
+
+#### n-grams
+
+```{r}
+text_bigrams <- notes_document %>% tidytext::unnest_tokens(bigram, text, token = "ngrams", n = 2)
+text_bigrams %>% count(bigram, sort = TRUE)
+
+bigrams_sep <- text_bigrams %>% separate(bigram, c("word1", "word2"), sep = " ")
+
+bigrams_filter <- bigrams_sep %>% filter(!word1 %in% english_stopwords) %>% filter(!word2 %in% english_stopwords)
+
+bigram_counts <- bigrams_filter %>% count(word1, word2, sort = TRUE)
+
+bigrams_united <- bigrams_filter %>% unite(bigram, word1, word2, sep = " ")
+
+notes_document_temp <- notes_document
+
+notes_document_temp %>% tidytext::unnest_tokens(trigram, text, token = "ngrams", n = 3) %>% separate(trigram, c("word1", "word2", "word3"), sep = " ") %>% filter(!word1 %in% english_stopwords, !word2 %in% english_stopwords, !word3 %in% english_stopwords) %>% count(word1, word2, word3, sort = TRUE)
+
+bigrams_separated %>%
+  filter(word1 == "not") %>%
+  count(word1, word2, sort = TRUE)
+```
+
+
+#### Sentiment Analysis
+
+```{r}
+AFINN <- tidytext::get_sentiments("afinn")
+
+not_set <- bigrams_separated %>% filter(word1 == "not") %>% inner_join(AFINN, by = c(word2 = "word")) %>% count(word2, value, sort = TRUE)
+
+
+not_set %>%
+  mutate(contribution = n * value) %>% arrange(desc(abs(contribution))) %>% head(20) %>% mutate(word2 = reorder(word2, contribution)) %>%
+  ggplot(aes(n * value, word2, fill = n * value > 0)) + geom_col(show.legend = FALSE) + labs(x = "Sentiment value * number of occurrences",
+       y = "Words preceded by \"not\"")
+
+
+#negation_words <- c("not", "no", "never", "without")
+
+#negated_words <- bigrams_separated %>%
+#  filter(word1 %in% negation_words) %>%
+#  inner_join(AFINN, by = c(word2 = "word")) %>%
+#  count(word1, word2, value, sort = TRUE)
+
+```
+
+
+#### Cohort Analysis 
+
+variable in different tables are analyzed. All codes are shown here. 
+
+```{r}
+all_codes <- c("4320", "4321", "430", "431", "72992","37923", "42979", "4230", "4230", "41512", "452", "45351", "45386", "45382", "45382", "4536", "4532", "4533", "4510", "4358", "43391", "36234", "4359", "44409", "44409", "41181", "42979", "41091", "41071", "44481", "5789", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160", "53200", "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300", "53310", "53320", "53340", "53350", "53360", "53400", "53410", "53420", "53440", "53450", "53460", "4560", "56212", "56213", "56213", "5695", "56202", "56203", "56201", "56203", "5693", "56881")
+
+newicd_notes <- subset(icdcodes, ICD9_CODE %in% all_codes)
+#icd_notes <- inner_join(x = note_new_clipped, y = newicd_notes, by = c("SUBJECT_ID", "HADM_ID"))
+
+```
+
+
+##### Cohort Analysis - age 
+
+```{r}
+admission_sub = Admissions[Admissions$SUBJECT_ID %in% newicd_notes$SUBJECT_ID & Admissions$HADM_ID %in% newicd_notes$HADM_ID,]
+admission_sub = admission_sub %>% distinct(SUBJECT_ID, .keep_all = TRUE)
+admission_sub$ADMITTIME = as.POSIXlt(as.character(admission_sub$ADMITTIME), format = "%Y-%m-%d %H:%M:%S")
+admission_sub$DISCHTIME = as.POSIXlt(as.character(admission_sub$DISCHTIME), format = "%Y-%m-%d %H:%M:%S")
+admission_sub$los = difftime( admission_sub$DISCHTIME, admission_sub$ADMITTIME, units = "days")
+admission_sub$birth = NA
+
+for (i in 1:nrow(admission_sub)){
+  #print(i)
+  admission_sub$birth[i] = as.character(patients$DOB[patients$SUBJECT_ID == admission_sub$SUBJECT_ID[i]])
+}
+admission_sub$birth = as.POSIXlt(admission_sub$birth, format = "%Y-%m-%d %H:%M:%S")
+admission_sub$age = NA
+admission_sub$age = difftime(admission_sub$ADMITTIME, admission_sub$birth, units = "days")/365.25
+hist(as.numeric(admission_sub$age))
+
+length(which(admission_sub$age>100))
+## 550 patients had age >100
+
+```
+
+##### Events' Subcategories codes
+
+
+```{r}
+neurological_bleeding <- c("4320", "4321", "430", "431")
+Musculoskeletal_bleeding <- c("72992")
+Ocular_bleeding <- c("37923")
+Cardiac_bleeding <- c("42979", "4230")
+Genitourinary_bleeding <- c("4230")
+pulmonary_thrombotic <- c("41512")
+extremity_thrombotic <- c("452", "45351", "45386", "45382", "45382", "4536", "4532", "4533", "4510")
+neurological_thrombotic <- c("4358", "43391", "36234", "4359")
+cardiovascular_thrombotic <-  c("44409", "44409", "41181", "42979", "41091", "41071", "44481")
+Gastrointestinal_bleeding <- c("5789", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160", "53200",
+                            "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300", "53310", "53320",
+                             "53340", "53350", "53360", "53400", "53410", "53420", "53440", "53450", "53460", "4560",
+                             "56212", "56213", "56213", "5695", "56202", "56203", "56201", "56203", "5693", "56881")
+```
+
 
 ### Results
 Describe your results and include relevant tables, plots, and code/comments used to obtain them. End with a brief conclusion of your findings related to the question you set out to address. You can include references if you'd like, but this is not required.
+
+
+### Limitations and Future Work
+
+
+
+### Conclusion
+
+
+
+### References
+
+MIMIC-III, a freely accessible critical care database. Johnson AEW, Pollard TJ, Shen L, Lehman L, Feng M, Ghassemi M, Moody B, Szolovits P, Celi LA, and Mark RG. Scientific Data (2016). DOI: 10.1038/sdata.2016.35. Available at: http://www.nature.com/articles/sdata201635
