@@ -1,0 +1,792 @@
+---
+title: "BMIN503/EPID600 Project Template"
+author: "Anahita Davoudi"
+output: 
+  html_document:
+    toc: false 
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+Use this template to complete your project throughout the course. Your Final Project presentation will be based on the contents of this document. Replace the title/name above and text below with your own, but keep the headers.
+
+### Overview
+
+This project uses the publicly available MIMIC-III ICU dataset to study the characteristics of the patients admitted to the Beth Israel Deaconess Medical Center under the category of Thrombotic events. This dataset has been developed by MIT and published around over 60,000 intensive care unit hospitalizations. This dataset includes demographics, vital signs, laboratory tests, medications, and other structured and unstructured data.
+
+Three faculty/staff have been consulted for the definition of the project:
+- Danielle Mowery: Assistant Professor; Department of Biostatistics, Epidemiology, and Informatics
+- Emily Schriver: Clinical Informaticist; Data Analytic Center
+- Sy Hwang: NLP data scientist/programmer; IBI Clinical Research Informatics Core   
+
+
+### Introduction 
+
+The thrombotic events have got attention due to COVID-19 recently. The thrombogenicity of COVID-19 has been detected by the high frequency of thrombotic events observed even in Covid-19 patients treated with anticoagulation. The thrombotic events hit every aspect of the circulatory system (e.g., multi-organ and multi-system). The clots can happen anywhere in the body, and we need a better way of identifying and classifying patients. We can achieve that by the qualitative characterizations of this data, looking at overlaps, and the different features between all categories of the thrombotic events.
+
+We use a data-driven approach for subphenotyping of patients. Subphenotyoing can be quite challenging and very biased. For this project, we used exploratory data analysis and natural language processing methods to help extract features of patients identified by thrombotic events. We have used ICD9 codes to describe our subcohort of thrombotic events from MIMIC-III. We will examine the patterns seen in the two cohorts of thrombotic and bleeding. 
+
+
+### Methods
+Describe the data used and general methodological approach. Subsequently, incorporate full R code necessary to retrieve and clean data, and perform analysis. Be sure to include a description of code so that others (including your future self) can understand what you are doing and why. 
+
+The MIMIC-III dataset contains healthcare data records for over 60,000 patients admitted to the Beth Israel Deaconess Medical Center in Massachusetts from June 2001 - October 2012. This dataset will be used to explore patients characteritics diagnosed with thrombotic events. We define two exclusive patient's cohort (thrombotic, and bleeding) and study the features of these two cohorts. 
+
+
+Required packages for the project:
+
+```{r}
+library(tm)
+library(dplyr) 
+library(ggplot2)
+library(wordcloud)
+library(RColorBrewer)
+library(topicmodels)
+library(tidyr)
+library(tidyverse) 
+library(ggraph)
+library(igraph)
+library(stringr)
+library(gtsummary)
+library(tableone)
+
+```
+
+#### Importing data
+
+List of input data from the MIMIC-III dataset:
+
+```{r}
+Admissions      <-  read.csv(file = 'ADMISSIONS.csv')
+icdcodes        <- read.csv(file = 'DIAGNOSES_ICDs.csv')
+#labs            <- read.csv(file = 'LABEVENTS.csv')
+#micro           <- read.csv(file = 'MICROBIOLOGYEVENTS.csv')
+prescriptions   <- read.csv(file = 'C:/Users/anahitad/thrombotic events/data/Pres.csv')
+patients        <- read.csv(file = 'PATIENTS.csv')
+notes           <- read.csv(file = 'NOTEEVENTSs.csv')
+
+```
+
+
+#### Data Cleaning
+
+This section selects only relevant information from Admissions, Diagnoses (ICD codes), Patients, Note events, lab events, prescriptions, labs, and micro tables. 
+
+##### Predefined ICD9 Codes
+
+A set of specific ICD9 codes are presented for the two category of thrombotic and bleeding.We also used some specific keywords to filter out the notes that are more related to these two categories. 
+
+```{r}
+synonyms_bleeding = c("bleeding", "haemorrhage", "haemorrhages", "hemorrhage", "hemorrhages", "hemorrhagic", "bleed", "ruptured", "aneurysm", 
+
+"aneurysms", "annurysum", "annurysums", "aneurism", "aneurisms", "hematoma", "hematomas")
+
+synonyms_thrombosis = c("thrombosis", "thrombotic", "thrombi", "blood clot", "blood clots", "clot", "clots", "ischemia", "ischemic", "infarction", "infarctions", "infraction", "infractions", "embolism", "embolisms", "embolus", "emboli", "embolic")
+
+icd_thrombotics <- c("452", "4358", "4359", "4536", "4532", "4533", "4510", "36234", "41071", "41091", "41181", "41512", "42979", "43391", "44409", "44481", "45351", "45386", "45382")
+
+icd_bleeding <- c("430", "431", "4230", "4320", "4321", "4560", "5693", "5695", "5789", "37923", "42979", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160", "53200", "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300", "53310", "53320", "53340", "53350", "53360", "53400", "53410", "53420", "53440", "53450", "53460", "56212", "56213", "56201", "56202", "56203", "72992", "56881")
+```
+
+
+##### Varible Selection
+
+We are intersetd in specific variables in each table. Since we are looking at thrombotic events, we are only interested in the note category of "Discharge Summary", and "Radiology" from the note event table. 
+
+```{r}
+
+#note_cat <- c("Discharge summary", "Radiology")
+#notes_new <- subset(notes, CATEGORY %in% note_cat)
+#note_new_clipped <- notes_new[,which(colnames(notes_new) %in% c("ROW_ID", "SUBJECT_ID", "HADM_ID", "CATEGORY", "TEXT"))]
+#icdcode_clipped <- icdcodes[,which(colnames(icdcodes) %in% c("ROW_ID", "SUBJECT_ID", "HADM_ID", "ICD9_CODE"))]
+
+out_thrombo <- filter(notes, str_detect(TEXT, paste(synonyms_thrombosis, collapse="|")))
+out_bleed <- filter(notes, str_detect(TEXT, paste(synonyms_bleeding, collapse="|")))
+newicd_thrombo <- subset(icdcodes, ICD9_CODE %in% icd_thrombotics)
+newicd_bleed <- subset(icdcodes, ICD9_CODE %in% icd_bleeding)
+
+```
+
+
+#### Joining Tables
+
+```{r}
+
+
+# join all tables except the notes: patients, ICD codes, prescriptions, admission
+#add a column that is showing this is thrombotic called Event with two levels (Thrombotic) and Bleeding
+#calculate age and los
+
+
+summary_thrombo <- list(Admissions, prescriptions, newicd_thrombo) %>% reduce(inner_join, by = c("SUBJECT_ID", "HADM_ID"))
+all_summary_thrombo <- inner_join(x = summary_thrombo, y = patients, by = "SUBJECT_ID")
+all_summary_thrombo$ADMITTIME = as.POSIXlt(as.character(all_summary_thrombo$ADMITTIME), format = "%Y-%m-%d %H:%M:%S")
+all_summary_thrombo$DISCHTIME = as.POSIXlt(as.character(all_summary_thrombo$DISCHTIME), format = "%Y-%m-%d %H:%M:%S")
+all_summary_thrombo$DOB = as.POSIXlt(as.character(all_summary_thrombo$DOB), format = "%Y-%m-%d %H:%M:%S")
+all_summary_thrombo$LOS = difftime( all_summary_thrombo$DISCHTIME, all_summary_thrombo$ADMITTIME, units = "days")
+all_summary_thrombo$LOS = as.numeric(all_summary_thrombo$LOS)
+all_summary_thrombo$AGE = difftime(all_summary_thrombo$ADMITTIME, all_summary_thrombo$DOB, units = "days")/365
+all_summary_thrombo$AGE = as.numeric(all_summary_thrombo$AGE)
+all_summary_thrombo <- all_summary_thrombo %>% add_column(Event = 'Thrombotic', .before = "ADMISSION_TYPE")
+
+
+
+summary_bleed <- list(Admissions, prescriptions, newicd_bleed) %>% reduce(inner_join, by = c("SUBJECT_ID", "HADM_ID"))
+all_summary_bleed <- inner_join(x = summary_bleed, y = patients, by = "SUBJECT_ID")
+all_summary_bleed$ADMITTIME = as.POSIXlt(as.character(all_summary_bleed$ADMITTIME), format = "%Y-%m-%d %H:%M:%S")
+all_summary_bleed$DISCHTIME = as.POSIXlt(as.character(all_summary_bleed$DISCHTIME), format = "%Y-%m-%d %H:%M:%S")
+all_summary_bleed$DOB = as.POSIXlt(as.character(all_summary_bleed$DOB), format = "%Y-%m-%d %H:%M:%S")
+all_summary_bleed$LOS = difftime( all_summary_bleed$DISCHTIME, all_summary_bleed$ADMITTIME, units = "days")
+all_summary_bleed$LOS = as.numeric(all_summary_bleed$LOS)
+all_summary_bleed$AGE = difftime( all_summary_bleed$ADMITTIME, all_summary_bleed$DOB, units = "days")/365
+all_summary_bleed$AGE = as.numeric(all_summary_bleed$AGE)
+all_summary_bleed <- all_summary_bleed %>% add_column(Event = 'Bleeding', .before = "ADMISSION_TYPE")
+
+
+# combining two data
+
+all_data <- rbind(all_summary_thrombo,all_summary_bleed)
+all_table_data <- all_data[,which(colnames(all_data) %in% c("SUBJECT_ID", "HADM_ID", "Event", "ADMISSION_TYPE", "ADMISSION_LOCATION", "DISCHARGE_LOCATION", "INSURANCE",  "MARITAL_STATUS", "ETHNICITY", "HOSPITAL_EXPIRE_FLAG", "DRUG_TYPE", "DRUG", "ICD9_CODE", "LOS", "GENDER", "AGE", "DIAGNOSIS"))]
+ 
+# if there are repeated rows then: 
+
+U_all_table_data <- unique(all_table_data)
+
+# conver characters to factor and numbers to numeric
+
+
+
+changed_data <- U_all_table_data
+
+#if a name of a drug has been repeated less than 500 times 
+
+
+#for each drug name if it has been repeated less than 500 times then change it to "Other"
+
+
+
+changed_data %>% tbl_summary(by = Event, missing = "no",) %>%
+  modify_header(label = "**Characteristic**") %>%
+  bold_labels() %>%
+  add_p()
+
+
+
+# cluster based on drugs? group based on drugs? chi-square test? association test? something here!
+
+
+# original nymber of drugs btween two groups: 2326
+
+
+```
+
+
+```{r}
+demo_data = all_table_data[!duplicated(all_table_data[,'SUBJECT_ID']),]
+dim(demo_data)
+
+```
+
+
+```{r}
+# drug type figure
+
+# U_all_table_data %>% ggplot(aes(x = Event, fill=DRUG_TYPE)) + geom_bar(position='dodge')
+
+
+# another figure for top 5 drugs for each event in same figure maybe? or separate?
+
+
+
+# another figure shows the distributions of the ICD9 codes beside each other for each event separate
+
+
+```
+
+#### Data Summary - Thrombotic Events
+
+```{r}
+
+# Figures here for both thrombotic and bleeding beside each other ...
+
+#Drug name categories: Any drugs that had less than 1000 in any of the bleeding or thrombotics has been categorized as other which reduced the number of drugs from 2326 to 160.  no actually to 29 (when doing unique stuff). 
+
+xxx = demo_data[,which(colnames(demo_data) %in% c("AGE","GENDER",  "ETHNICITY","INSURANCE","ADMISSION_TYPE","Event"))]
+
+other_ethnicity <- c("AMERICAN INDIAN/ALASKA NATIVE", "AMERICAN INDIAN/ALASKA NATIVE FEDERALLY RECOGNIZED TRIBE", "CARIBBEAN ISLAND", "MULTI RACE ETHNICITY", "OTHER",
+"UNABLE TO OBTAIN", "UNKNOWN/NOT SPECIFIED", "PATIENT DECLINED TO ANSWER", "NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER", "PORTUGUESE")
+
+ASIAN <- c("ASIAN", "ASIAN - ASIAN INDIAN", "ASIAN - CAMBODIAN", "ASIAN - CHINESE", "ASIAN - FILIPINO", "ASIAN - JAPANESE", "ASIAN - KOREAN", "ASIAN - OTHER", "ASIAN - THAI", "ASIAN - VIETNAMESE")
+
+WHITE <- c("WHITE", "WHITE - BRAZILIAN", "WHITE - EASTERN EUROPEAN", "WHITE - OTHER EUROPEAN", "WHITE - RUSSIAN", "MIDDLE EASTERN")
+
+BLACK <- c("BLACK/AFRICAN", "BLACK/AFRICAN AMERICAN", "BLACK/CAPE VERDEAN", "BLACK/HAITIAN")
+
+HISPANIC <- c("HISPANIC OR LATINO", "HISPANIC/LATINO - COLOMBIAN", "HISPANIC/LATINO - CUBAN", "HISPANIC/LATINO - DOMINICAN", "HISPANIC/LATINO - GUATEMALAN", "HISPANIC/LATINO - PUERTO RICAN", "HISPANIC/LATINO - SALVADORAN")
+
+xxx <- xxx %>% mutate(ETHNICITY = case_when(ETHNICITY %in% ASIAN ~ "ASIAN", ETHNICITY %in% WHITE ~ "WHITE", ETHNICITY %in% BLACK ~ "BLACK", ETHNICITY %in% HISPANIC ~ "HISPANIC", ETHNICITY %in% other_ethnicity ~ "OTHER"))
+
+
+# Age over 100 change to NA since the de-identification process made the age variable abnormal here
+
+xxx$AGE = ifelse(xxx$AGE>100, NA, xxx$AGE)
+
+xxx %>% tbl_summary(by = Event) %>%
+  modify_header(label = "**Characteristic**") %>%
+  bold_labels() %>%
+  add_p() %>%  add_overall()
+
+
+# looking at diagnosis
+
+
+yyy <- unique(all_table_data)
+
+zzz <- unique(yyy[c("DIAGNOSIS")])
+
+synonyms_bleeding = c("bleeding", "haemorrhage", "haemorrhages", "hemorrhage", "hemorrhages", "hemorrhagic", "bleed", "ruptured", "aneurysm", 
+
+"aneurysms", "annurysum", "annurysums", "aneurism", "aneurisms", "hematoma", "hematomas")
+
+synonyms_thrombosis = c("thrombosis", "thrombotic", "thrombi", "blood clot", "blood clots", "clot", "clots", "ischemia", "ischemic", "infarction", "infarctions", "infraction", "infractions", "embolism", "embolisms", "embolus", "emboli", "embolic")
+
+
+
+```
+
+
+# demoghrapic figures
+
+
+```{r}
+demo_data$DISCHARGE_LOCATION = ifelse(demo_data$DISCHARGE_LOCATION %in% c("HOME","HOME WITH HOME IV PROVIDR",'HOME HEALTH CARE',
+                                                                          "LEFT AGAINST MEDICAL ADVI"), "HOME",
+                                demo_data$DISCHARGE_LOCATION)
+demo_data$DISCHARGE_LOCATION = ifelse(demo_data$DISCHARGE_LOCATION %in% c("HOSPICE-MEDICAL FACILITY","HOSPICE-HOME"), "HOSPICE",
+                                demo_data$DISCHARGE_LOCATION)
+demo_data$DISCHARGE_LOCATION = ifelse(demo_data$DISCHARGE_LOCATION %in% c("LONG TERM CARE HOSPITAL","SHORT TERM HOSPITAL",
+                                                                          "REHAB/DISTINCT PART HOSP","DISCH-TRAN TO PSYCH HOSP",
+                                                                          "DISC-TRAN CANCER/CHLDRN H"), "HOSPITAL",
+                                demo_data$DISCHARGE_LOCATION)
+demo_data$DISCHARGE_LOCATION = ifelse(demo_data$DISCHARGE_LOCATION %in% c("SNF","ICF","OTHER FACILITY","DISC-TRAN TO FEDERAL HC"), "Facility",
+                                demo_data$DISCHARGE_LOCATION)
+```
+
+
+
+
+```{r}
+box_age  = ggplot(demo_data, aes(x = Event, y = LOS))+
+  geom_boxplot()
+disch_data = array(dim = c(10, 3))
+disch_data = as.data.frame(disch_data)
+colnames(disch_data) = c("disch_location","Event","Number")
+disch_names = unique(demo_data$DISCHARGE_LOCATION)
+for(i in 1:5){
+  disch_data$disch_location[i] = disch_names[i]
+  disch_data$Event[i] = "Bleeding"
+  disch_data$Number[i] = length(which(demo_data$Event=="Bleeding" & demo_data$DISCHARGE_LOCATION == disch_names[i]))
+}
+
+
+for(i in 1:5){
+  disch_data$disch_location[i+5] = disch_names[i]
+  disch_data$Event[i+5] = "Thrombotic"
+  disch_data$Number[i+5] = length(which(demo_data$Event=="Thrombotic" & demo_data$DISCHARGE_LOCATION == disch_names[i]))
+}
+
+bar_disch = ggplot(disch_data, aes(x = Event, y = Number, fill = disch_location))+
+  geom_bar(stat = 'identity', position = position_dodge())
+
+## normalized version for discharge location
+disch_data = array(dim = c(10, 3))
+disch_data = as.data.frame(disch_data)
+colnames(disch_data) = c("disch_location","Event","Number")
+disch_names = unique(demo_data$DISCHARGE_LOCATION)
+for(i in 1:5){
+  disch_data$disch_location[i] = disch_names[i]
+  disch_data$Event[i] = "Bleeding"
+  disch_data$Number[i] = length(which(demo_data$Event=="Bleeding" & demo_data$DISCHARGE_LOCATION == disch_names[i]))/length(which(demo_data$Event=="Bleeding"))
+}
+
+
+for(i in 1:5){
+  disch_data$disch_location[i+5] = disch_names[i]
+  disch_data$Event[i+5] = "Thrombotic"
+  disch_data$Number[i+5] = length(which(demo_data$Event=="Thrombotic" & demo_data$DISCHARGE_LOCATION == disch_names[i]))/length(which(demo_data$Event=='Thrombotic'))
+}
+
+bar_disch_normalized = ggplot(disch_data, aes(x = Event, y = Number, fill = disch_location))+
+  geom_bar(stat = 'identity', position = position_dodge())
+
+
+
+death_pie = array(dim = c(4,3))
+death_pie = as.data.frame(death_pie)
+colnames(death_pie) = c("Death","Event","Value")
+death_levels =c("Alive","Expired")
+for(i in 1:2){
+  death_pie$Death[i] = death_levels[i]
+  death_pie$Event[i]="Bleeding"
+  death_pie$Value[i] = length(which(demo_data$HOSPITAL_EXPIRE_FLAG==(i-1) & demo_data$Event=="Bleeding"))/
+    length(which(demo_data$Event=="Bleeding"))
+}
+
+for(i in 1:2){
+  death_pie$Death[i+2] = death_levels[i]
+  death_pie$Event[i+2]="Thrombotic"
+  death_pie$Value[i+2] = length(which(demo_data$HOSPITAL_EXPIRE_FLAG==(i-1) & demo_data$Event=="Thrombotic"))/
+    length(which(demo_data$Event=="Thrombotic"))
+}
+
+pie_death = ggplot(death_pie, aes(x ="", y = Value, fill = Death))+
+  geom_bar(stat = 'identity')+
+  coord_polar("y", start = 0)+facet_wrap(~Event)
+
+## report this table too
+mean(demo_data$LOS[demo_data$Event=="Bleeding"])
+mean(demo_data$LOS[demo_data$Event=="Thrombotic"])
+
+sd(demo_data$LOS[demo_data$Event=="Bleeding"])
+sd(demo_data$LOS[demo_data$Event=="Thrombotic"])
+
+t.test(demo_data$LOS[demo_data$Event=="Bleeding"],demo_data$LOS[demo_data$Event=="Thrombotic"])
+
+
+require(ggpubr)
+
+ggarrange(box_age, pie_death, bar_disch, nrow = 2,ncol = 2, labels = c("A","B","C"))
+
+#ggsave("myplot.png")
+
+```
+
+
+
+### Results
+
+This section shows the results of cohort analysis of the two categories with the plots and codes used to get them.
+
+
+#### Topic Modeling
+
+As a popular unsupervised method, we used topic Modeling with Latent Dirichlet Allocation (LDA) for discovering latent semantic properties in our cohorts' notes. 
+
+```{r}
+# Merging two tables that represent the two cohorts of thrombotic and bleeding by the two indexes to build the cohort data for the topic modeling 
+
+icd_notes_thrombo <- inner_join(x = out_thrombo, y = newicd_thrombo, by = c("SUBJECT_ID", "HADM_ID"))
+icd_notes_bleed <- inner_join(x = out_bleed, y = newicd_bleed, by = c("SUBJECT_ID", "HADM_ID"))
+
+
+```
+
+
+##### Document Cleaning 
+
+Neccesary steps before apply the LDA model
+
+1. Creating the corpus
+2. Cleaning the corpus (removing punctuations, numbers, stop words, white spaces, etc.)
+3. getting rid of very commons words in the text 
+
+```{r}
+
+#Thrombo
+
+notes_document_t <- icd_notes_thrombo%>% select(ROW_ID.x, TEXT)%>% rename(doc_id = ROW_ID.x, text = TEXT)
+
+notes_corpus_t <- Corpus(DataframeSource(notes_document_t))
+
+notes_corpus_t <- tm_map(notes_corpus_t, removePunctuation, preserve_intra_word_dashes = TRUE)
+
+notes_corpus_t <- tm_map(notes_corpus_t, removeNumbers)
+
+notes_corpus_t <- tm_map(notes_corpus_t, tolower)
+
+
+custom_stopwords <- read.csv("stopwords.csv", header = FALSE)
+custom_stopwords <- as.character(custom_stopwords$V1)
+custom_stopwords <- c(custom_stopwords, stopwords()) 
+
+
+#english_stopwords <- readLines("https://slcladal.github.io/resources/stopwords_en.txt", encoding = "UTF-8")
+
+notes_corpus_t <- tm_map(notes_corpus_t, removeWords, custom_stopwords)
+
+#notes_corpus_t <- tm_map(notes_corpus_t, stemDocument, language = "en")
+
+notes_corpus_t <- tm_map(notes_corpus_t, stripWhitespace)
+
+
+#Bleeding
+
+notes_document_b <- icd_notes_bleed%>% select(ROW_ID.x, TEXT)%>% rename(doc_id = ROW_ID.x, text = TEXT)
+
+notes_corpus_b <- Corpus(DataframeSource(notes_document_b))
+
+notes_corpus_b <- tm_map(notes_corpus_b, removePunctuation, preserve_intra_word_dashes = TRUE)
+
+notes_corpus_b <- tm_map(notes_corpus_b, removeNumbers)
+
+notes_corpus_b <- tm_map(notes_corpus_b, tolower)
+
+
+notes_corpus_b <- tm_map(notes_corpus_b, removeWords, custom_stopwords)
+
+#notes_corpus_b <- tm_map(notes_corpus_b, removeWords, c(english_stopwords, "admission","discharge","doctor", "hospital", "job", "number", "last", "first", "name", "namepattern", "date", "telephon", "fax", "patient", "left", "right", "man", "woman", "status", "note", "clip", "report", "radiology", "reason", "chest", "report", "medic", "radilog", "admit", "year", "final", "impress", "chang", "unchang", "find", "histori", "present", "portabl", "contrast", "day", "daily", "note", "show", "time", "Portal", "main", "patent", "show", "medic", "medical", "medics", "patient", "patients", "historics", "historic", "historical", "histori", "stable", "stabl", "stables", "start", "stop", "week", "notes", "hour", "hct-", "wbc-", "family", "disp", "rbc-", "hgb-", "tube",  "capsul","insulin", "mcv-", "initi", "glucose-", "ct-", "rdw-", "start", "call", "Chang", "change", "changes", "changed", "indentify", "identifi", "identification", "procedur", "procedure", "procedures", "hct-", "admit", "admits", "imag", "images", "image", "diagnosi", "diagnosis", "post", "numer", "wbc-", "rbc-", "condit", "hgb-", "mcv-", "rdw-", "unchang", "unchanged", "impress", "impression", "mchc-", "eval", "evaluate", "evaluation", "mch-", "initi", "initial", "hour", "hours", "level", "egd", "line", "imag", "imags", "hct", "need", "side", "later", "ct-")) 
+
+#notes_corpus_b <- tm_map(notes_corpus_b, stemDocument, language = "en")
+
+
+notes_corpus_b <- tm_map(notes_corpus_b, stripWhitespace)
+
+
+
+```
+
+
+##### Building Document Term Matrix
+
+In the LDA model, we need to build a Document Term Matrix (DTM) that contains the number of term occurrences per document. The rows of the DTM represent the documents, and the columns represent the whole vocabulary. Setting a minimum frequency would save overwhelming the system's memory. 
+```{r}
+
+#Thrombo
+
+min_freq_t <- 100
+notes_corpus_t.dtm <- DocumentTermMatrix(notes_corpus_t, control = list(bounds = list(global = c(min_freq_t, Inf))))
+
+rowTotals_t <- apply(notes_corpus_t.dtm , 1, sum)
+
+notes_corpus_t.dtm   <- notes_corpus_t.dtm[rowTotals_t> 0, ] 
+
+dim(notes_corpus_t.dtm)
+
+
+# Bleeding
+min_freq_b <- 100
+notes_corpus_b.dtm <- DocumentTermMatrix(notes_corpus_b, control = list(bounds = list(global = c(min_freq_b, Inf))))
+
+rowTotals_b <- apply(notes_corpus_b.dtm , 1, sum)
+
+notes_corpus_b.dtm   <- notes_corpus_b.dtm[rowTotals_b> 0, ] 
+
+dim(notes_corpus_b.dtm)
+
+
+
+
+```
+
+##### Term Frequency 
+
+```{r}
+
+#Thrombo
+
+freq_t <- sort(colSums(as.matrix(notes_corpus_t.dtm)), decreasing=TRUE)   
+
+word.freq_t <- data.frame(word_t = names(freq_t), freq = freq_t)
+
+Tplot<- ggplot(subset(word.freq_t, freq_t > 10000), aes(x = reorder(word_t, -freq), y = freq)) +
+  geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + coord_flip() + labs(title = "Thrombotics")+
+  labs(x="Common Word List", y="Frequency")
+
+
+# Bleeding
+
+freq_b <- sort(colSums(as.matrix(notes_corpus_b.dtm)), decreasing=TRUE)   
+
+word.freq_b <- data.frame(word_b = names(freq_b), freq = freq_b)
+
+Bplot <- ggplot(subset(word.freq_b, freq_b > 20000), aes(x = reorder(word_b, -freq), y = freq)) +
+  geom_bar(stat = "identity") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) + coord_flip() + labs(title = "Bleeding")+
+  labs(x="Common Word List", y="Frequency")
+
+library("ggpubr")
+
+figure <- ggarrange(Tplot, Bplot,
+                    labels = c("A", "B"))
+figure
+
+#ggsave("myplot2.png")
+
+
+
+```
+
+##### Word Cloud
+
+
+```{r}
+
+#set.seed(2000)
+
+
+par(mfrow=c(1,2))
+
+
+wordcloud(words = names(freq_t), freq = freq_t, min.freq = 10000, max.words=50,  random.order=FALSE, rot.per=0.35, random.color = FALSE, colors= c("indianred1","indianred2","indianred3","indianred"))
+
+wordcloud(words = names(freq_b), freq = freq_b, min.freq = 10000, max.words=40, random.order=FALSE, rot.per=0.35, random.color = FALSE, colors= c("lightsteelblue1","lightsteelblue2","lightsteelblue3","lightsteelblue"))
+
+#ggsave("myplot5.png")
+
+
+```
+
+
+##### LDA topic Modelling 
+
+To apply the LDA model, various parameters need to be set, e.g. number of topics, the LDA methods, iterations,etc. 
+
+```{r}
+
+K <- 20
+set.seed(1000)
+# Gibbs sampling
+topicModel_t <- LDA(notes_corpus_t.dtm, K, method="Gibbs", control=list(iter = 500, verbose = 50))
+topicModel_b <- LDA(notes_corpus_b.dtm, K, method="Gibbs", control=list(iter = 500, verbose = 50))
+topicModel_t
+topicModel_b
+
+
+```
+
+##### Topic Terms
+
+```{r}
+terms(topicModel_t, 10)
+terms(topicModel_b, 10)
+
+library(tidytext)
+topicModel_td_t <- tidy(topicModel_t)
+topicModel_td_t
+
+topicModel_td_b <- tidy(topicModel_b)
+topicModel_td_b
+
+
+top_terms_t <- topicModel_td_t %>%
+  group_by(topic) %>%
+  top_n(5, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+top_terms_t
+
+top_terms_b <- topicModel_td_b %>%
+  group_by(topic) %>%
+  top_n(5, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+top_terms_b
+
+
+top_terms_t %>%
+  mutate(topic = factor(topic),
+         term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = topic)) +
+  geom_bar(alpha = 1.0, stat = "identity", show.legend = FALSE) +
+  scale_x_reordered() +
+  facet_wrap(~ topic, scales = "free", ncol = 5) +
+  coord_flip()
+
+top_terms_b %>%
+  mutate(topic = factor(topic),
+         term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = topic)) +
+  geom_bar(alpha = 1.0, stat = "identity", show.legend = FALSE) +
+  scale_x_reordered() +
+  facet_wrap(~ topic, scales = "free", ncol = 5) +
+  coord_flip()
+
+library(gplots)
+
+cor_topic_t = cor(posterior(topicModel_t)$topics)
+diag(cor_topic_t) = 0
+heatmap(cor_topic_t)
+
+cor_topic_b = cor(posterior(topicModel_b)$topics)
+diag(cor_topic_b) = 0
+heatmap(cor_topic_b)
+
+
+#ggsave("myplot5.png")
+
+
+```
+
+##### Best topics by coherence and prevalence score
+
+Two measures are presented here: Coherence and Prevalence. Coherence tell us how associated words are in a topic. Prevalence tells us the most frequent topics in the corpus.
+
+```{r}
+# the figure for coherence and prevalence score in the Topic Model
+
+
+```
+
+##### Cluster Analysis of the Topics
+
+Using Hellinger distance to explore the relatedness between topics. 
+
+```{r}
+# Dendogram (distance between 2 probability vectors) 
+
+
+```
+
+
+#### n-grams
+
+```{r}
+#text_bigrams <- notes_document %>% tidytext::unnest_tokens(bigram, text, token = "ngrams", n = 2)
+
+#bigrams_sep <- text_bigrams %>% separate(bigram, c("word1", "word2"), sep = " ")
+
+```
+
+
+#### Sentiment Analysis
+
+```{r}
+#AFINN <- tidytext::get_sentiments("afinn")
+
+#not_set <- bigrams_sep %>% filter(word1 == "not") %>% inner_join(AFINN, by = c(word2 = "word")) %>% count(word2, value, sort = TRUE)
+
+
+#not_set %>% mutate(contribution = n * value) %>% arrange(desc(abs(contribution))) %>% head(20) %>% mutate(word2 = reorder(word2, contribution)) %>%
+#  ggplot(aes(n * value, word2, fill = n * value > 0)) + geom_col(show.legend = FALSE) + labs(x = "Sentiment value * number of occurrences",
+#       y = "Words preceded by \"not\"")
+
+
+#negation_words <- c("not", "no", "never", "without")
+
+#negated_words <- bigrams_separated %>%
+#  filter(word1 %in% negation_words) %>%
+#  inner_join(AFINN, by = c(word2 = "word")) %>%
+#  count(word1, word2, value, sort = TRUE)
+
+```
+
+
+#### Cohort Analysis 
+
+variable in different tables are analyzed. All codes are shown here. 
+
+```{r}
+#all_codes <- c("4320", "4321", "430", "431", "72992","37923", "42979", "4230", "4230", "41512", "452", "45351", "45386", "45382", "45382", "4536", "4532", "4533", "4510", "4358", "43391", "36234", "4359", "44409", "44409", "41181", "42979", "41091", "41071", "44481", "5789", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160", "53200", "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300", "53310", "53320", "53340", "53350", "53360", "53400", "53410", "53420", "53440", "53450", "53460", "4560", "56212", "56213", "56213", "5695", "56202", "56203", "56201", "56203", "5693", "56881")
+
+#newicd_notes <- subset(icdcodes, ICD9_CODE %in% all_codes)
+#icd_notes <- inner_join(x = note_new_clipped, y = newicd_notes, by = c("SUBJECT_ID", "HADM_ID"))
+
+```
+
+
+##### Cohort Analysis - age 
+
+```{r}
+#admission_sub = Admissions[Admissions$SUBJECT_ID %in% newicd_notes$SUBJECT_ID & Admissions$HADM_ID %in% newicd_notes$HADM_ID,]
+#admission_sub = admission_sub %>% distinct(SUBJECT_ID, .keep_all = TRUE)
+#admission_sub$ADMITTIME = as.POSIXlt(as.character(admission_sub$ADMITTIME), format = "%Y-%m-%d %H:%M:%S")
+#admission_sub$DISCHTIME = as.POSIXlt(as.character(admission_sub$DISCHTIME), format = "%Y-%m-%d %H:%M:%S")
+#admission_sub$los = difftime( admission_sub$DISCHTIME, admission_sub$ADMITTIME, units = "days")
+#admission_sub$birth = NA
+
+#for (i in 1:nrow(admission_sub)){
+  #print(i)
+#  admission_sub$birth[i] = as.character(patients$DOB[patients$SUBJECT_ID == admission_sub$SUBJECT_ID[i]])
+#}
+#admission_sub$birth = as.POSIXlt(admission_sub$birth, format = "%Y-%m-%d %H:%M:%S")
+#admission_sub$age = NA
+#admission_sub$age = difftime(admission_sub$ADMITTIME, admission_sub$birth, units = "days")/365.25
+#admission_sub$age = as.numeric(admission_sub$age)
+#hist(as.numeric(admission_sub$age))
+
+#length(which(admission_sub$age>100))
+## 550 patients had age >100
+
+```
+
+
+
+```{r}
+#admission_sub$subtype_binary = NA
+#bleeding <- c("4320", "4321", "430", "431","72992","37923","42979", "4230","5789", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160", "53200",
+#                            "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300", "53310", "53320",
+#                             "53340", "53350", "53360", "53400", "53410", "53420", "53440", "53450", "53460", "4560",
+#                             "56212", "56213", "56213", "5695", "56202", "56203", "56201", "56203", "5693", "56881")
+
+#thrombotic <- c("41512","452", "45351", "45386", "45382", "45382", "4536", "4532", "4533", "4510","4358", "43391", "36234", "4359","44409", "44409", "41181", "42979", "41091", "41071", "44481")
+
+
+
+ 
+#for(i in 1:nrow(admission_sub)){
+  
+#  temp = icdcodes[which(icdcodes$SUBJECT_ID == admission_sub$SUBJECT_ID[i] & 
+#                                 icdcodes$HADM_ID == admission_sub$HADM_ID[i]),]
+#  if(any(temp$ICD9_CODE %in% bleeding)){
+#    admission_sub$subtype_binary[i] = paste(admission_sub$subtype_binary[i], "bleeding", sep = "_")
+#  }
+#  if(any(temp$ICD9_CODE %in% thrombotic )){
+#    admission_sub$subtype_binary[i] = paste(admission_sub$subtype_binary[i], "thrombotic ", sep = "_")
+#  }
+  
+#}
+ 
+ 
+
+#admission_sub$subtype_binary = gsub("NA_","",admission_sub$subtype_binary)
+#table(admission_sub$subtype_binary)
+```
+
+
+
+```{r}
+#prescriptions_sub = prescriptions[prescriptions$SUBJECT_ID %in% admission_sub$SUBJECT_ID &  prescriptions$HADM_ID %in% admission_sub$HADM_ID,]
+#prescriptions_sub$label = NA
+#for(i in 1:nrow(prescriptions_sub)){
+#  prescriptions_sub$label[i] = admission_sub$subtype_binary[admission_sub$SUBJECT_ID == prescriptions_sub$SUBJECT_ID[i] & 
+#                                                              admission_sub$HADM_ID == prescriptions_sub$HADM_ID[i]]
+#}
+
+```
+
+
+
+
+### Limitations and Future Work
+
+This project study the thrombotic and bleedings evenst for the patinets admitted based on the MIMIC-III dataset. The analysis can take a step further by looking at the different categories of the thrombotic and bleeding events. Some of the most common subcategories and their respective ICD-9 codes are shown below. 
+
+#### Events' Subcategories codes
+
+```{r}
+#neurological_bleeding <- c("4320", "4321", "430", "431")
+#Musculoskeletal_bleeding <- c("72992")
+#Ocular_bleeding <- c("37923")
+#Cardiac_bleeding <- c("42979", "4230")
+#Genitourinary_bleeding <- c("4230")
+#pulmonary_thrombotic <- c("41512")
+#extremity_thrombotic <- c("452", "45351", "45386", "45382", "45382", "4536", "4532", "4533", "4510")
+#neurological_thrombotic <- c("4358", "43391", "36234", "4359")
+#cardiovascular_thrombotic <-  c("44409", "44409", "41181", "42979", "41091", "41071", "44481")
+#Gastrointestinal_bleeding <- c("5789", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160", "53200",
+#                            "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300", "53310", "53320",
+#                             "53340", "53350", "53360", "53400", "53410", "53420", "53440", "53450", "53460", "4560",
+#                            "56212", "56213", "56213", "5695", "56202", "56203", "56201", "56203", "5693", "56881")
+```
+
+
+### Conclusion
+
+
+
+### References
+
+MIMIC-III, a freely accessible critical care database. Johnson AEW, Pollard TJ, Shen L, Lehman L, Feng M, Ghassemi M, Moody B, Szolovits P, Celi LA, and Mark RG. Scientific Data (2016). DOI: 10.1038/sdata.2016.35. Available at: http://www.nature.com/articles/sdata201635
