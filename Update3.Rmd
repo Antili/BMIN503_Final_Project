@@ -1,0 +1,637 @@
+---
+title: "Towards a Data-driven Approach for Phenotyping Patients with Thrombotic and Bleeding Events"
+author: "Anahita Davoudi, PhD"
+output: 
+  html_document:
+    toc: TRUE 
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+    depth: 3 
+    theme: paper 
+    highlight: tango
+---
+```{r set-options, echo=FALSE, cache=FALSE}
+options(width = 400)
+```  
+***
+
+### Overview
+
+This project uses a data-driven approach for phenotyping patients with thrombotic and bleeding events. The publicly available MIMIC-III dataset has been used to study such patients' characteristics admitted to the Beth Israel Deaconess Medical Center. This dataset has been developed by MIT and consists of over 60,000 intensive care unit hospitalizations. 
+
+
+Three faculty/staff have helped with the definition of the project:
+- Danielle Mowery: Assistant Professor; Department of Biostatistics, Epidemiology, and Informatics
+- Emily Schriver: Clinical Informaticist; Data Analytic Center
+- Sy Hwang: NLP data scientist/programmer; IBI Clinical Research Informatics Core   
+
+
+### Introduction 
+
+A thrombotic event is defined as a blood clot within the veins or arteries obstructing blood flow through the body. Each year almost 700,000 individuals experienced an ischemic stroke in the US, and about 900,000 experience venous thromboembolism. There are some challenges to preventing and treating patients with thrombotic events. When treating someone with thrombotic events, the patient may be put at risk of bleeding because of the medications used (anticoagulation therapy, blood thinner for breaking the clot). So the treatment or the prevention can break the clot and cause the blood vessels to rupture and bleed. A blockage would be a thrombotic event, and a rupture would be a bleeding event. The thrombotic events hit every aspect of the circulatory system (e.g., multi-organ); the clot can register anywhere in the body system.
+
+We use a data-driven approach for the phenotyping of patients. Subphenotyoing can be quite challenging and very biased. For this project, we used exploratory data analysis and natural language processing methods to help extract patients' features identified by thrombotic events. We have used ICD9 codes to describe our subcohort of thrombotic events from MIMIC-III. 
+
+
+### Methods
+
+The MIMIC-III dataset contains healthcare data records for over 60,000 patients admitted to the Beth Israel Deaconess Medical Center in Massachusetts from June 2001 - October 2012. This dataset will be used to explore the patient's characteristics diagnosed with thrombotic events. We define two patient cohorts (thrombotic and bleeding) and study these two cohorts' features. For our long term goal, We want to determine incidents of thrombotic events and bleeding events among COVID-19 patients. Covid-19 has a prothrombotic component in terms of macro or micro clotting. Patients get clots in their bodies from Covid-19 infections. According to these events, we want to develop an NLP-based approach to phenotype and subphenotype patients based on anatomical location. Specifically, we are interested in qualifying them by anatomical or vascular anatomy affected. In the short term, for this project, we want to explore data-driven methods for learning the differences between these groups by: i) Characterizing thrombotic and bleeding event cohort, and ii) identifying subtopics documented within the patients' notes using topic Modeling (Latent Dirichlet Allocation (LDA)).
+
+
+#### Libraries
+
+The following libraries are needed for preprocessing and analyzing the data. 
+
+```{r}
+library(dplyr) 
+library(ggplot2)
+library(gplots)
+library(ggpubr)
+library(gtsummary)
+library(RColorBrewer)
+library(tableone)
+library(tidyr)
+library(tidytext) 
+library(tidyverse) 
+library(tm)
+library(topicmodels)
+
+```
+
+#### Importing dataset
+
+The MIMIC-III dataset (a critical care dataset) has been used for this project, which consists of several tables of data. MIMIC is the abbreviation for medical information mart for intensive care. MIMIC-III is a de-identified electronic health record (EHR) data that has about 61,000 patients in it. To Access the data, specific permission is required through the MIMIC-III data access. The following tables have been imported from the MIMIC-III: Patient table, Admission table, ICD codes table, NoteEvent table, and prescription table.  
+
+
+Reading the input data:
+
+```{r}
+Admissions      <- read.csv(file = 'ADMISSIONS.csv')
+icdcodes        <- read.csv(file = 'DIAGNOSES_ICDs.csv')
+prescriptions   <- read.csv(file = 'Pres.csv')
+patients        <- read.csv(file = 'PATIENTS.csv')
+notes           <- read.csv(file = 'NOTEEVENTSs.csv')
+
+```
+
+
+The patient table: Patient's information at the admission.
+
+
+```{r}
+str(patients)
+head(patients)
+
+```
+
+
+The Admission table: Information about a patient’s admission to the hospital.
+
+
+```{r}
+
+str(Admissions)
+head(Admissions)
+
+```
+
+
+The Diagnosis_ICD table: ICD-9 diagnosis codes for each patient admitted to the hospital.
+
+```{r}
+str(icdcodes)
+head(icdcodes)
+
+```
+
+
+NoteEvent table: All notes for each patient admitted to the hospital (Discharge summary, physician note, etc.)
+
+
+```{r}
+str(notes)
+head(notes)
+
+```
+
+
+Prescription table: Information related to patient's prescriptions.
+
+```{r}
+str(prescriptions)
+head(prescriptions)
+
+```
+
+
+#### Data Cleaning
+
+This section selects only relevant information from Admissions, Diagnoses (ICD codes), Patients, Note events, and prescriptions table. 
+
+##### ICD-9 Codes and keywords Extraction
+
+A set of specific ICD-9 codes are used to define the two cohorts of thrombotic and bleeding events (icd_thrombotics and icd_bleeding variables). Also, we used a few specific keywords to filter out the notes that are more related to these two categories. We used keywords such as emboli, hemorrhage, clots, bleeding, and more keywords synonyms for filtering. Since each patient would have many notes and ICD codes, we use these lists to filter out the ones related to our cohorts. 
+
+
+**Keywords**
+
+
+```{r}
+synonyms_bleeding   <- c("bleeding", "haemorrhage", "haemorrhages", "hemorrhage", "hemorrhages",
+                      "hemorrhagic", "bleed", "ruptured", "aneurysm", "aneurysms", "annurysum",
+                      "annurysums", "aneurism", "aneurisms", "hematoma", "hematomas")
+
+
+synonyms_thrombosis <- c("thrombosis", "thrombotic", "thrombi", "blood clot", "blood clots",
+                        "clot", "clots", "ischemia", "ischemic", "infarction", "infarctions",
+                        "infraction", "infractions", "embolism", "embolisms", "embolus", "emboli", "embolic")
+```
+
+
+**ICD-9 Codes**
+
+
+```{r}
+icd_thrombotics     <- c("452", "4358", "4359", "4536", "4532", "4533", "4510", "36234", "41071", "41091",
+                     "41181", "41512", "42979", "43391", "44409", "44481", "45351", "45386", "45382")
+
+
+icd_bleeding        <- c("430", "431", "4230", "4320", "4321", "4560", "5693", "5695", "5789", "37923",
+                         "42979", "53501", "53100", "53110", "53120", "53130", "53140", "53150", "53160",
+                         "53200", "53210", "53220", "53230", "53240", "53250", "53260", "53270", "53300",
+                         "53310", "53320", "53340", "53350", "53360", "53400", "53410", "53420", "53440",
+                         "53450", "53460", "56212", "56213", "56201", "56202", "56203", "72992", "56881")
+```
+
+
+Based on the keywords and ICD-9 codes defined before, the filtering is applied to the NoteEvent (notes) table for each cohort. The keyword search is done on the "TEXT" column of the note table. Also, only rows of the ICD table would be considered that have one of the specific ICD-9 codes defined before. 
+
+
+```{r}
+
+out_thrombo      <- filter(notes, str_detect(TEXT, paste(synonyms_thrombosis, collapse="|")))
+out_bleed        <- filter(notes, str_detect(TEXT, paste(synonyms_bleeding, collapse="|")))
+
+
+newicd_thrombo   <- subset(icdcodes, ICD9_CODE %in% icd_thrombotics)
+newicd_bleed     <- subset(icdcodes, ICD9_CODE %in% icd_bleeding)
+
+```
+
+##### Building Data Cohorts
+
+After defining each cohort features, we join all the tables, except the note table, together based on their SUBJECT_ID (patient identifier) and HADM_ID (admission identifier). We would work on the note files separately later. 
+
+
+```{r}
+
+summary_thrombo       <- list(Admissions, prescriptions, newicd_thrombo) %>% reduce(inner_join, by = c("SUBJECT_ID", "HADM_ID"))
+summary_bleed         <- list(Admissions, prescriptions, newicd_bleed) %>% reduce(inner_join, by = c("SUBJECT_ID", "HADM_ID"))
+
+
+all_summary_thrombo   <- inner_join(x = summary_thrombo, y = patients, by = "SUBJECT_ID")
+all_summary_bleed     <- inner_join(x = summary_bleed, y = patients, by = "SUBJECT_ID")
+```
+
+
+Then we define the variable "AGE" as the difference between DOB and admission time and variable "LOS" (length of stay) as the difference between admit time and discharge time.
+
+
+```{r}
+
+# Thrombo
+
+all_summary_thrombo$ADMITTIME  <- as.POSIXlt(as.character(all_summary_thrombo$ADMITTIME), 
+                                             format = "%Y-%m-%d %H:%M:%S")
+
+all_summary_thrombo$DISCHTIME  <- as.POSIXlt(as.character(all_summary_thrombo$DISCHTIME), 
+                                             format = "%Y-%m-%d %H:%M:%S")
+
+all_summary_thrombo$DOB        <- as.POSIXlt(as.character(all_summary_thrombo$DOB), 
+                                             format = "%Y-%m-%d %H:%M:%S")
+
+all_summary_thrombo$LOS        <- difftime( all_summary_thrombo$DISCHTIME, 
+                                            all_summary_thrombo$ADMITTIME, units = "days")
+
+all_summary_thrombo$LOS        <- as.numeric(all_summary_thrombo$LOS)
+
+all_summary_thrombo$AGE        <- difftime(all_summary_thrombo$ADMITTIME, 
+                                           all_summary_thrombo$DOB, units = "days")/365
+
+all_summary_thrombo$AGE        <- as.numeric(all_summary_thrombo$AGE)
+
+
+
+# Bleeding
+
+
+all_summary_bleed$ADMITTIME    <- as.POSIXlt(as.character(all_summary_bleed$ADMITTIME), 
+                                         format = "%Y-%m-%d %H:%M:%S")
+
+all_summary_bleed$DISCHTIME    <- as.POSIXlt(as.character(all_summary_bleed$DISCHTIME), 
+                                         format = "%Y-%m-%d %H:%M:%S")
+
+all_summary_bleed$DOB          <- as.POSIXlt(as.character(all_summary_bleed$DOB), 
+                                   format = "%Y-%m-%d %H:%M:%S")
+
+all_summary_bleed$LOS          <- difftime( all_summary_bleed$DISCHTIME, 
+                                  all_summary_bleed$ADMITTIME, units = "days")
+
+all_summary_bleed$LOS          <- as.numeric(all_summary_bleed$LOS)
+
+all_summary_bleed$AGE          <- difftime( all_summary_bleed$ADMITTIME, 
+                                all_summary_bleed$DOB, units = "days")/365
+
+all_summary_bleed$AGE          <- as.numeric(all_summary_bleed$AGE)
+```
+
+
+Then, we add the Event column to each table which shows if this event is thrombotic or bleeding. 
+
+
+```{r}
+all_summary_thrombo  <- all_summary_thrombo %>% add_column(Event = 'Thrombotic', .before = "ADMISSION_TYPE")
+all_summary_bleed    <- all_summary_bleed %>% add_column(Event = 'Bleeding', .before = "ADMISSION_TYPE")
+```
+
+
+After building tables for each set of data separately, we combine both tables and select specific rows to be included in the cohort. We excluded some columns, such as Diagnosis and Drug, since they had many factor levels (each has more than 2000 different unique values) and would not contribute directly to our method at this step. 
+
+
+```{r}
+
+all_data         <- rbind(all_summary_thrombo,all_summary_bleed)
+
+all_table_data   <- all_data[,which(colnames(all_data) %in% c("SUBJECT_ID", "HADM_ID", "Event", "ADMISSION_TYPE",
+                                                              "ADMISSION_LOCATION", "DISCHARGE_LOCATION", "INSURANCE",       
+                                                              "MARITAL_STATUS", "ETHNICITY", "HOSPITAL_EXPIRE_FLAG", 
+                                                              "DRUG_TYPE", "DRUG", "ICD9_CODE", "LOS", "GENDER", "AGE", "DIAGNOSIS"))]
+ 
+str(all_table_data)
+
+```
+
+
+We can get the unique "SUBJECT_ID"s, which shows the number of patients in the data. 
+
+
+```{r}
+demo_data       <- all_table_data[!duplicated(all_table_data[,'SUBJECT_ID']),]
+
+dim(demo_data)
+str(demo_data)
+head(demo_data)
+
+```
+
+
+#### Data Summary 
+
+Using unique subject ID as the patient identifier, we show the summary table of the cohort data below using the following features: age, gender, ethnicity, insurance, admission type, event, drug type, and ICD9 code. The age for patients over 89 has shifted through the de-identification process, so we changed those values to NA. 
+
+
+```{r}
+
+Patient_data_summary      <- demo_data[,which(colnames(demo_data) %in% c("AGE","GENDER",  "ETHNICITY","INSURANCE",
+                                                               "ADMISSION_TYPE","Event", "DRUG_TYPE"))]
+
+Patient_data_summary$AGE  <- ifelse(Patient_data_summary$AGE>89, NA, Patient_data_summary$AGE)
+
+
+other_ethnicity           <- c("AMERICAN INDIAN/ALASKA NATIVE", "AMERICAN INDIAN/ALASKA NATIVE FEDERALLY RECOGNIZED TRIBE",
+                               "CARIBBEAN ISLAND", "MULTI RACE ETHNICITY", "OTHER", "UNABLE TO OBTAIN", "UNKNOWN/NOT SPECIFIED",
+                               "PATIENT DECLINED TO ANSWER", "NATIVE HAWAIIAN OR OTHER PACIFIC ISLANDER", "PORTUGUESE")
+
+
+ASIAN                     <- c("ASIAN", "ASIAN - ASIAN INDIAN", "ASIAN - CAMBODIAN", "ASIAN - CHINESE",
+                               "ASIAN - FILIPINO", "ASIAN - JAPANESE", "ASIAN - KOREAN", "ASIAN - OTHER",
+                               "ASIAN - THAI", "ASIAN - VIETNAMESE")
+
+
+WHITE                     <- c("WHITE", "WHITE - BRAZILIAN", "WHITE - EASTERN EUROPEAN", "WHITE - OTHER EUROPEAN",
+                               "WHITE - RUSSIAN", "MIDDLE EASTERN")
+
+
+BLACK                     <- c("BLACK/AFRICAN", "BLACK/AFRICAN AMERICAN", "BLACK/CAPE VERDEAN", "BLACK/HAITIAN")
+
+
+HISPANIC                  <- c("HISPANIC OR LATINO", "HISPANIC/LATINO - COLOMBIAN", "HISPANIC/LATINO - CUBAN",
+                               "HISPANIC/LATINO - DOMINICAN", "HISPANIC/LATINO - GUATEMALAN", "HISPANIC/LATINO - PUERTO RICAN",
+                               "HISPANIC/LATINO - SALVADORAN")
+
+
+Patient_data_summary       <- Patient_data_summary %>% mutate(ETHNICITY = case_when(ETHNICITY %in% ASIAN ~ "ASIAN",
+                                                                                    ETHNICITY %in% WHITE ~ "WHITE",
+                                                                                    ETHNICITY %in% BLACK ~ "BLACK",
+                                                                                    ETHNICITY %in% other_ethnicity ~ "OTHER",
+                                                                                    ETHNICITY %in% HISPANIC ~ "HISPANIC"))
+
+str(Patient_data_summary)
+head(Patient_data_summary)
+
+```
+
+
+The table1 summary for this data is shown below. The table shows the differences between the cohorts for these two groups. There are differences in terms of gender, ethnicity, etc. They have low p-values, which shows there are differences between subgroups. We can notice the differences in the type of insurance (medicare and private) and differences in whether it was an elective surgery or emergency. Differences here that can be driving that is the differences between the disease burdens. 
+
+
+
+```{r}
+Patient_data_summary %>% tbl_summary(by = Event) %>%
+        modify_header(label = "**Characteristic**") %>%
+        bold_labels() %>%
+        add_p() %>%
+        add_overall()
+
+```
+
+### Results
+
+This section shows the results of cohort analysis of the two categories with the plots and codes used to get them.
+
+
+#### Topic Modeling
+
+After characterizing the patient cohort in the previous summary table, As a popular unsupervised method, we used topic Modeling with Latent Dirichlet Allocation (LDA) for discovering latent semantic properties in our cohorts' notes. Topic models are efficient methods to analyze a large volume of text. There are many different methods in this area. However, the most common and useful one is LDA. This method cluster words into topics and cluster documents into mixtures of topics. The LDA model associates each document with a probability distribution over topics, where topics are probability distributions over words. 
+
+
+
+```{r}
+# Merging two tables that represent the two cohorts of thrombotic and bleeding by the two indexes to build the cohort data for the topic modeling 
+
+icd_notes_thrombo <- inner_join(x = out_thrombo, y = newicd_thrombo, by = c("SUBJECT_ID", "HADM_ID"))
+icd_notes_bleed   <- inner_join(x = out_bleed, y = newicd_bleed, by = c("SUBJECT_ID", "HADM_ID"))
+
+```
+
+
+##### Document Cleaning 
+
+
+To make the data ready for the LDA model, we need to build a corpus of the text using multiple preprocessing steps such as reducing cases, removing whitespaces, remove stops words, removing punctuations, etc. Then we make a matrix of terms called the document term matrix that is ready to build the topics. We applied the LDA topic modeling method on the patient's notes in our two cohorts. 
+
+
+Necessary steps before applying the LDA model:
+
+1. Creating the corpus
+2. Cleaning the corpus (removing punctuations, numbers, stop words, white spaces, etc.)
+3. getting rid of very commons words in the text 
+
+
+```{r}
+
+#Thrombo
+
+notes_document_t <- icd_notes_thrombo%>% select(ROW_ID.x, TEXT)%>% rename(doc_id = ROW_ID.x, text = TEXT)
+
+notes_corpus_t   <- Corpus(DataframeSource(notes_document_t))
+
+notes_corpus_t   <- tm_map(notes_corpus_t, removePunctuation, preserve_intra_word_dashes = TRUE)
+
+notes_corpus_t   <- tm_map(notes_corpus_t, removeNumbers)
+
+notes_corpus_t   <- tm_map(notes_corpus_t, tolower)
+
+
+custom_stopwords <- read.csv("stopwords.csv", header = FALSE)
+custom_stopwords <- as.character(custom_stopwords$V1)
+custom_stopwords <- c(custom_stopwords, stopwords()) 
+
+
+notes_corpus_t   <- tm_map(notes_corpus_t, removeWords, custom_stopwords)
+
+notes_corpus_t   <- tm_map(notes_corpus_t, stripWhitespace)
+
+
+#Bleeding
+
+notes_document_b <- icd_notes_bleed%>% select(ROW_ID.x, TEXT)%>% rename(doc_id = ROW_ID.x, text = TEXT)
+
+notes_corpus_b   <- Corpus(DataframeSource(notes_document_b))
+
+notes_corpus_b   <- tm_map(notes_corpus_b, removePunctuation, preserve_intra_word_dashes = TRUE)
+
+notes_corpus_b   <- tm_map(notes_corpus_b, removeNumbers)
+
+notes_corpus_b   <- tm_map(notes_corpus_b, tolower)
+
+
+notes_corpus_b   <- tm_map(notes_corpus_b, removeWords, custom_stopwords)
+
+notes_corpus_b   <- tm_map(notes_corpus_b, stripWhitespace)
+
+
+
+```
+
+
+
+##### Document Term Matrix
+
+
+The Document Term Matrix (DTM) contains the number of term occurrences per document. The rows of the DTM represent the documents, and the columns represent the whole vocabulary. Setting a minimum frequency would save overwhelming the system's memory. If all values in a row are zero, we delete that row (sparse matrix consumes system's memory)
+
+
+```{r}
+
+#Thrombo
+
+min_freq_t         <- 100
+
+notes_corpus_t.dtm <- DocumentTermMatrix(notes_corpus_t, control = list(bounds = list(global = c(min_freq_t, Inf))))
+
+rowsum_t        <- apply(notes_corpus_t.dtm , 1, sum)
+
+notes_corpus_t.dtm <- notes_corpus_t.dtm[rowsum_t> 0, ] 
+
+dim(notes_corpus_t.dtm)
+
+
+
+# Bleeding
+min_freq_b         <- 100
+
+notes_corpus_b.dtm <- DocumentTermMatrix(notes_corpus_b, control = list(bounds = list(global = c(min_freq_b, Inf))))
+
+rowsum_b        <- apply(notes_corpus_b.dtm , 1, sum)
+
+notes_corpus_b.dtm  <- notes_corpus_b.dtm[rowsum_b> 0, ] 
+
+dim(notes_corpus_b.dtm)
+
+```
+
+##### Term Frequency 
+
+The figure below shows the term frequency for each corpus. Based on the figures, the thrombotic corpus has heart, vein, pulmonary, cardiac, etc., as the most frequent words, and the bleeding corpus has blood, bleed, artery, aneurysm, etc., as the most frequent words. The frequency for terms in the bleeding cohort is much higher (one reason could be that we have more notes on that category as well)
+
+
+```{r}
+
+#Thrombo
+
+freq_t       <- sort(colSums(as.matrix(notes_corpus_t.dtm)), decreasing=TRUE)   
+
+word.freq_t  <- data.frame(word_t = names(freq_t), freq = freq_t)
+
+Tplot        <- ggplot(subset(word.freq_t, freq_t > 10000), aes(x = reorder(word_t, -freq), y = freq)) +
+                       geom_bar(stat = "identity", color="gray55", fill="greenyellow") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+                       coord_flip() + labs(title = "Thrombotics")+
+                       labs(x="Most Frequent Words", y="Frequency")
+
+
+# Bleeding
+
+freq_b       <- sort(colSums(as.matrix(notes_corpus_b.dtm)), decreasing=TRUE)   
+
+word.freq_b  <- data.frame(word_b = names(freq_b), freq = freq_b)
+
+Bplot        <- ggplot(subset(word.freq_b, freq_b > 20000), aes(x = reorder(word_b, -freq), y = freq)) +
+                       geom_bar(stat = "identity", color="gray55", fill="brown1") + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+                       coord_flip() + labs(title = "Bleeding")+ 
+                       labs(x="Most Frequent Words", y="Frequency")
+
+
+figure       <- ggarrange(Tplot, Bplot, labels = c("A", "B"))
+
+figure
+
+```
+
+##### Word Cloud
+
+
+```{r}
+
+#set.seed(2000)
+
+
+#par(mfrow=c(1,2))
+
+
+#wordcloud(words = names(freq_t), freq = freq_t, min.freq = 10000, max.words=30,  random.order=FALSE, random.color = FALSE, colors= c("indianred1","indianred2","indianred3","indianred"))
+
+#wordcloud(words = names(freq_b), freq = freq_b, min.freq = 10000, max.words=30, random.order=FALSE, random.color = FALSE, colors= #c("lightsteelblue1","lightsteelblue2","lightsteelblue3","lightsteelblue"))
+
+#ggsave("myplot5.png")
+
+
+```
+
+
+##### LDA topic Modelling 
+
+After building the corpus and implementing the preprocessing steps, we apply the LDA model (500 iterations for the topics to converge). We extract k=20 topics for each corpus. 
+
+
+```{r}
+
+K <- 20
+set.seed(1000)
+
+topicModel_t <- LDA(notes_corpus_t.dtm, K, method="Gibbs", control=list(iter = 500, verbose = 50))
+topicModel_b <- LDA(notes_corpus_b.dtm, K, method="Gibbs", control=list(iter = 500, verbose = 50))
+
+topicModel_t
+topicModel_b
+
+
+```
+
+After building the topic model, we can check each topic's first ten terms for each cohort and also their corresponding beta value (the probability value of each word that builds a topic)
+
+##### Topic Terms
+
+```{r}
+terms(topicModel_t, 10)
+terms(topicModel_b, 10)
+
+topicModel_td_t <- tidy(topicModel_t)
+topicModel_td_t
+
+topicModel_td_b <- tidy(topicModel_b)
+topicModel_td_b
+```
+
+
+The 5 highest probability terms are shown for each of the 20 topics for both cohorts. Their beta values (the probability of each word in each topic) are presented in the table.
+
+After getting the 5 top terms for each topic, we can label them and understand what each topic would represent. We labeled some of the topics here as an example:
+
+**Thrombotic**:
+*Topic2*: normal heart condition
+*Topic3*: history of abdominal bleeding
+*Topic4*: Intracranial Hemorrhages
+*Topic5*: Myocardial Infarction (Heart Attack)
+*Topic10*: history of respiratory issue
+*Topic12*: Myocardial Infarction (Heart Attack)
+*Topic13*: blood lab test
+*Topic14*: negative infection result
+*Topic16*: anatomical locations
+*Topic17*: Pulmonary embolism
+*Topic18*: Intracranial Hemorrhages
+*Topic19*: medication order
+*Topic20*: Myocardial Infarction (Heart Attack)
+
+**Bleeding**:
+*Topic1*: Intracranial Hemorrhages
+*Topic5*: Brain Mass seen in MRI
+*Topic8*: blood lab test
+*Topic14*: Intracranial Hemorrhages
+*Topic17*: Subdural Hematoma
+*Topic18*: Intracranial Hemorrhages
+
+```{r}
+
+# Tables
+
+
+top_terms_t <- topicModel_td_t %>%
+  group_by(topic) %>%
+  top_n(5, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+top_terms_t
+
+
+top_terms_b <- topicModel_td_b %>%
+  group_by(topic) %>%
+  top_n(5, beta) %>%
+  ungroup() %>%
+  arrange(topic, -beta)
+top_terms_b
+
+
+# Figures
+
+
+top_terms_t %>%
+  mutate(topic = factor(topic),
+         term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = topic)) +
+  geom_bar(alpha = 1.0, stat = "identity", show.legend = FALSE) +
+  scale_x_reordered() +
+  facet_wrap(~ topic, scales = "free", ncol = 5) +
+  coord_flip()
+
+top_terms_b %>%
+  mutate(topic = factor(topic),
+         term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(term, beta, fill = topic)) +
+  geom_bar(alpha = 1.0, stat = "identity", show.legend = FALSE) +
+  scale_x_reordered() +
+  facet_wrap(~ topic, scales = "free", ncol = 5) +
+  coord_flip()
+
+```
+
+
+### Conclusion and Future Work
+
+This project used LDA topic modeling, an unsupervised machine learning method, to provide important insights for phenotyping patients. Since we used unigrams in our approach, we may get better results using higher-order grams (bigram, trigram, 2-4 words windows). Applying feature selection to reduce the feature space would also help to extract better topics. We can also use the LDA to perform subanalysis to characterize subtypes such as neurological bleeding, ocular bleeding, cardiac bleeding, pulmonary thrombotic, neurological thrombotic, cardiovascular thrombotic, etc. There is a difference in the level of clotting that can happen. In COVID-19 patients, a lot of micro clotting occurs in addition to big clots, which is very different from traditional thrombotic patients who may have 1-2 big clots but don’t have these large amounts of macro clots. As the next step, we would apply this method to our COVID-19 dataset to study the cohort.
+
+
+### References
+
+MIMIC-III, a freely accessible critical care database. Johnson AEW, Pollard TJ, Shen L, Lehman L, Feng M, Ghassemi M, Moody B, Szolovits P, Celi LA, and Mark RG. Scientific Data (2016). DOI: 10.1038/sdata.2016.35. Available at: http://www.nature.com/articles/sdata201635
